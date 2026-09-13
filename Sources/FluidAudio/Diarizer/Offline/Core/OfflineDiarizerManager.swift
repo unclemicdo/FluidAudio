@@ -380,6 +380,10 @@ public final class OfflineDiarizerManager {
         // the (constrained) assignment reruns over the extended centroid set.
         // Anything short of that returns the baseline assignments and
         // centroids unchanged.
+        let rescueTrace = ProcessInfo.processInfo.environment["UMSTT_RESCUE_DEBUG"] != nil
+        if rescueTrace {
+            FileHandle.standardError.write(("rescue: config=" + String(describing: config.clustering.minorityRescue) + "\n").data(using: .utf8)!)
+        }
         if case .enabled(let rescueOptions) = config.clustering.minorityRescue,
            config.clustering.numSpeakers == nil,
            config.clustering.minSpeakers == nil,
@@ -397,6 +401,9 @@ public final class OfflineDiarizerManager {
                 timedEmbeddings: timedEmbeddings,
                 trainingIndices: trainingIndices
             )
+            if rescueTrace {
+                FileHandle.standardError.write(("rescue: training=\(trainingIndices.count) clusters=\(new Set(initialClusters).count)\n").data(using: .utf8)!)
+            }
             let rescueResult = rescueEngine.resolve(
                 embeddingFeatures: embeddingFeatures,
                 trainingIndices: trainingIndices,
