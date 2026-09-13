@@ -182,6 +182,10 @@ struct MinorityClusterRescueEngine {
             return baseline
         }
 
+        log(
+            .debug,
+            "resolve: training=\(trainingIndices.count) initialClusters=\(Set(initialClusters).count) frames=\(Int(frameDuration * 10000))"
+        )
         let candidates = buildCandidates(
             embeddingFeatures: embeddingFeatures,
             trainingIndices: trainingIndices,
@@ -189,6 +193,7 @@ struct MinorityClusterRescueEngine {
             baselineAssignments: baselineAssignments,
             baselineCentroids: baselineCentroids
         )
+        log(.debug, "resolve: candidates=\(candidates.map(\.initialClusterLabel))")
         guard !candidates.isEmpty else { return baseline }
 
         let accepted = selectCompatibleCandidates(
