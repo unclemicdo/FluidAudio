@@ -358,7 +358,7 @@ public final class OfflineDiarizerManager {
             config.clustering.constrainedAssignment
             && !vbxOutput.wasAdjusted
             && centroids.count > 1
-        let assignments: [Int]
+        var assignments: [Int]
         if useConstrainedAssignment {
             assignments = ConstrainedClusterAssignment.assign(
                 scores: centroidScores(
@@ -372,6 +372,48 @@ public final class OfflineDiarizerManager {
                 embeddingFeatures: embeddingFeatures,
                 centroids: centroids
             )
+        }
+
+        // Optional minority-cluster rescue: a third gate cascade between the
+        // baseline assignment and `buildChunkAssignments`. A swallowed AHC
+        // child with enough independent support gets its centroid appended and
+        // the (constrained) assignment reruns over the extended centroid set.
+        // Anything short of that returns the baseline assignments and
+        // centroids unchanged.
+        if case .enabled(let rescueOptions) = config.clustering.minorityRescue,
+           config.clustering.numSpeakers == nil,
+           config.clustering.minSpeakers == nil,
+           config.clustering.maxSpeakers == nil,
+           !vbxOutput.wasAdjusted,
+           !centroids.isEmpty,
+           centroids.count < rescueOptions.maximumSpeakers
+        {
+            let rescueEngine = MinorityClusterRescueEngine(
+                options: rescueOptions,
+                frameDuration: segmentation.frameDuration,
+                chunkOffsets: (0..<segmentation.chunkOffsets.count).map { index in
+                    segmentation.chunkOffsets[index]
+                },
+                timedEmbeddings: timedEmbeddings,
+                trainingIndices: trainingIndices
+            )
+            let rescueResult = rescueEngine.resolve(
+                embeddingFeatures: embeddingFeatures,
+                trainingIndices: trainingIndices,
+                initialClusters: initialClusters,
+                baselineAssignments: assignments,
+                baselineCentroids: centroids,
+                constrainedAssignment: useConstrainedAssignment
+            )
+            if rescueResult.rescuedClusters > 0 {
+                centroids = rescueResult.centroids
+                assignments = rescueResult.assignments
+                logger.info(
+                    "Minority-cluster rescue recovered \(rescueResult.rescuedClusters) speaker cluster(s)"
+                )
+            } else {
+                logger.debug("Minority-cluster rescue produced no candidates")
+            }
         }
 
         let chunkAssignments = buildChunkAssignments(

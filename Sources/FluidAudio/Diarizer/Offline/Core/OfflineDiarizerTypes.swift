@@ -151,6 +151,10 @@ public struct OfflineDiarizerConfig: Sendable {
         /// speaker count is forced via `numSpeakers`/`minSpeakers`/`maxSpeakers`
         /// re-clustering.
         public var constrainedAssignment: Bool
+        /// Opt-in rescue of AHC minority child clusters that VB refinement
+        /// absorbed into their majority host. `MinorityClusterRescue.disabled`
+        /// (the default) preserves upstream behavior exactly.
+        public var minorityRescue: MinorityClusterRescue
 
         public static let community = Clustering(
             threshold: 0.6,
@@ -169,7 +173,8 @@ public struct OfflineDiarizerConfig: Sendable {
             minSpeakers: Int? = nil,
             maxSpeakers: Int? = nil,
             numSpeakers: Int? = nil,
-            constrainedAssignment: Bool = true
+            constrainedAssignment: Bool = true,
+            minorityRescue: MinorityClusterRescue = .disabled
         ) {
             self.threshold = threshold
             self.warmStartFa = warmStartFa
@@ -178,6 +183,7 @@ public struct OfflineDiarizerConfig: Sendable {
             self.maxSpeakers = maxSpeakers
             self.numSpeakers = numSpeakers
             self.constrainedAssignment = constrainedAssignment
+            self.minorityRescue = minorityRescue
         }
     }
 
