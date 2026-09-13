@@ -301,41 +301,48 @@ struct MinorityClusterRescueEngine {
             candidateSupport(trainingIndex: trainingIndex).count > 0
         }
         guard !activeMembers.isEmpty else { log(.debug, "gate1 no active members"); return nil }
-        // Gate 1 — selection: from the candidate's member windows, pick a
-        // maximal, deterministic, pairwise non-overlapping subset (classical
-        // earliest-end greedy after sorting by span start). Sliding windows
-        // naturally overlap across adjacent chunks; only a subset needs to be
-        // mutually disjoint to count as independent evidence.
-        let memberSpans = activeMembers
+        // Gate 1 — selection: canonical frames make each member's footprint
+        // precise (window overlap collapses onto shared global frames). Greedy
+        // earliest-start walk over frame ranges keeps a subset whose frame
+        // spans never overlap; only that subset counts as independent
+        // chunk-level evidence.
+        let memberRuns = activeMembers
             .filter { trainingIndices.indices.contains($0) }
-            .compactMap { trainingIndex -> (trainingIndex: Int, start: Double, end: Double)? in
+            .map { trainingIndex -> (trainingIndex: Int, chunk: Int, frames: Set<Int>) in
                 let embedding = timedEmbeddings[trainingIndices[trainingIndex]]
-                guard embedding.chunkIndex >= 0, embedding.chunkIndex < chunkOffsets.count else {
-                    return nil
-                }
-                let span = windowSpan(trainingIndex: trainingIndex)
-                guard span.end > span.start else { return nil }
-                return (trainingIndex, span.start, span.end)
+                return (trainingIndex, embedding.chunkIndex, candidateSupport(trainingIndex: trainingIndex))
             }
+            .filter { !$0.frames.isEmpty }
             .sorted { lhs, rhs in
-                if lhs.start != rhs.start { return lhs.start < rhs.start }
-                if lhs.end != rhs.end { return lhs.end < rhs.end }
+                let lhsFrames = lhs.frames, rhsFrames = rhs.frames
+                let lhsStart = lhsFrames.min()!, rhsStart = rhsFrames.min()!
+                let lhsEnd = lhsFrames.max()!, rhsEnd = rhsFrames.max()!
+                if lhsStart != rhsStart { return lhsStart < rhsStart }
+                if lhsEnd != rhsEnd { return lhsEnd < rhsEnd }
+                if lhs.chunk != rhs.chunk { return lhs.chunk < rhs.chunk }
                 return lhs.trainingIndex < rhs.trainingIndex
             }
-        var selected: [(trainingIndex: Int, start: Double, end: Double)] = []
-        selected.reserveCapacity(min(memberSpans.count, 4))
-        var lastEnd = -Double.infinity
-        for span in memberSpans where span.start >= lastEnd {
-            selected.append(span)
-            lastEnd = span.end
+        struct FrameRun {
+            var trainingIndex: Int
+            var start: Int
+            var end: Int
+            var chunk: Int
         }
-        let distinctChunks = Set(selected.compactMap { span -> Int? in
-            let embedding = timedEmbeddings[trainingIndices[span.trainingIndex]]
-            guard embedding.chunkIndex >= 0 else { return nil }
-            return embedding.chunkIndex
-        })
+        var selectedRuns: [FrameRun] = []
+        var lastFrame = -1
+        for run in memberRuns {
+            let start = run.frames.min()!
+            let end = run.frames.max()!
+            guard start > lastFrame else { continue }
+            selectedRuns.append(
+                FrameRun(trainingIndex: run.trainingIndex, start: start, end: end, chunk: run.chunk)
+            )
+            lastFrame = end
+        }
+        let distinctChunks = Set(selectedRuns.map(\.chunk).filter { $0 >= 0 })
+
         if distinctChunks.count < options.minIndependentChunks {
-            log(.debug, "gate1 insufficient independent chunks subset=\(selected.count)")
+            log(.debug, "gate1 insufficient independent chunks subset=\(selectedRuns.count)")
             return nil
         }
 
