@@ -297,41 +297,47 @@ struct MinorityClusterRescueEngine {
         baselineCentroids: [[Double]]
     ) -> Candidate? {
         guard members.count >= 2 else { return nil }
-
-        // Gate 1 — independent support: members backed by at least
-        // `minIndependentChunks` distinct chunk indices whose source windows do
-        // not overlap in time; same-chunk speaker slots are not independent
-        // evidence.
-        var perChunk: [Int: [(start: Double, end: Double)]] = [:]
         let activeMembers = members.filter { trainingIndex in
             candidateSupport(trainingIndex: trainingIndex).count > 0
         }
-        guard !activeMembers.isEmpty else 
-            
-            { log(.debug, "gate1 no active members"); return nil }
-        for trainingIndex in activeMembers {
-            let embedding = timedEmbeddings[trainingIndices[trainingIndex]]
-            let span = windowSpan(trainingIndex: trainingIndex)
-            perChunk[embedding.chunkIndex, default: []].append(span)
-        }
-        let distinctChunks = perChunk.keys.filter { index in index >= 0 }
-        guard distinctChunks.count >= options.minIndependentChunks else 
-            
-            { log(.debug, "gate1 insufficient distinct chunks"); return nil }
-        // Intervals across distinct chunks must not overlap.
-        let acrossChunkIntervals = perChunk.keys
-            .filter { $0 >= 0 }
-            .compactMap { chunkIndex -> (start: Double, end: Double)? in
-                guard chunkIndex < chunkOffsets.count else { return nil }
-                let spans = perChunk[chunkIndex] ?? []
-                guard let first = spans.map(\.start).min(),
-                      let last = spans.map(\.end).max()
-                else { return nil }
-                return (first, last)
+        guard !activeMembers.isEmpty else { log(.debug, "gate1 no active members"); return nil }
+        // Gate 1 — selection: from the candidate's member windows, pick a
+        // maximal, deterministic, pairwise non-overlapping subset (classical
+        // earliest-end greedy after sorting by span start). Sliding windows
+        // naturally overlap across adjacent chunks; only a subset needs to be
+        // mutually disjoint to count as independent evidence.
+        let memberSpans = activeMembers
+            .filter { trainingIndices.indices.contains($0) }
+            .compactMap { trainingIndex -> (trainingIndex: Int, start: Double, end: Double)? in
+                let embedding = timedEmbeddings[trainingIndices[trainingIndex]]
+                guard embedding.chunkIndex >= 0, embedding.chunkIndex < chunkOffsets.count else {
+                    return nil
+                }
+                let span = windowSpan(trainingIndex: trainingIndex)
+                guard span.end > span.start else { return nil }
+                return (trainingIndex, span.start, span.end)
             }
-        guard
-            intervalsAreMutuallyDisjoint(acrossChunkIntervals)
-        else { return nil }
+            .sorted { lhs, rhs in
+                if lhs.start != rhs.start { return lhs.start < rhs.start }
+                if lhs.end != rhs.end { return lhs.end < rhs.end }
+                return lhs.trainingIndex < rhs.trainingIndex
+            }
+        var selected: [(trainingIndex: Int, start: Double, end: Double)] = []
+        selected.reserveCapacity(min(memberSpans.count, 4))
+        var lastEnd = -Double.infinity
+        for span in memberSpans where span.start >= lastEnd {
+            selected.append(span)
+            lastEnd = span.end
+        }
+        let distinctChunks = Set(selected.compactMap { span -> Int? in
+            let embedding = timedEmbeddings[trainingIndices[span.trainingIndex]]
+            guard embedding.chunkIndex >= 0 else { return nil }
+            return embedding.chunkIndex
+        })
+        if distinctChunks.count < options.minIndependentChunks {
+            log(.debug, "gate1 insufficient independent chunks subset=\(selected.count)")
+            return nil
+        }
 
         // Gate 1b — absorption shape: a strong fraction of the candidate must
         // have been absorbed by one baseline host.
