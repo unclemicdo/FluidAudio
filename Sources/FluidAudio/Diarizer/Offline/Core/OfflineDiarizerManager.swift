@@ -402,7 +402,7 @@ public final class OfflineDiarizerManager {
                 trainingIndices: trainingIndices
             )
             if rescueTrace {
-                FileHandle.standardError.write(("rescue: training=\(trainingIndices.count) clusters=\(new Set(initialClusters).count)\n").data(using: .utf8)!)
+                FileHandle.standardError.write(("rescue: training=\(trainingIndices.count) initialClusters=\(Set(initialClusters).count)\n").data(using: .utf8)!)
             }
             let rescueResult = rescueEngine.resolve(
                 embeddingFeatures: embeddingFeatures,
