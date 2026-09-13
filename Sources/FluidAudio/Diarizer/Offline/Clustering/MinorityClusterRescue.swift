@@ -142,6 +142,11 @@ struct MinorityClusterRescueEngine {
         case .debug: logger.debug(text)
         case .info: logger.info(text)
         }
+        // Local tracing hook: technical statistics only; nothing is cached
+        // besides what Unified Logging already keeps for the process.
+        if ProcessInfo.processInfo.environment["UMSTT_RESCUE_DEBUG"] != nil {
+            FileHandle.standardError.write(("rescue: " + text + "\n").data(using: .utf8)!)
+        }
     }
 
     enum AppLogLevel { case debug, info }
