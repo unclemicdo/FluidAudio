@@ -341,8 +341,11 @@ struct MinorityClusterRescueEngine {
         }
         let distinctChunks = Set(selectedRuns.map(\.chunk).filter { $0 >= 0 })
 
-        if distinctChunks.count < options.minIndependentChunks {
-            log(.debug, "gate1 insufficient independent chunks subset=\(selectedRuns.count)")
+        if distinctChunks.count < options.minIndependentChunks || selectedRuns.count < 2 {
+            log(
+                .debug,
+                "gate1 rejected label=\(label) members=\(members.count) active=\(activeMembers.count) selected=\(selectedRuns.count) chunks=\(distinctChunks.count) frames(0-2)=\(memberRuns.prefix(2).map { "\($0.frames.min()!)..\($0.frames.max()!)" })"
+            )
             return nil
         }
 
