@@ -87,6 +87,8 @@ struct MinorityClusterRescueResult {
 
 @available(macOS 14.0, iOS 17.0, *)
 struct MinorityClusterRescueEngine {
+    private let logger = AppLogger(category: "OfflineMinorityRescue")
+
     struct Candidate {
         /// AHC label of the child cluster.
         var initialClusterLabel: Int
@@ -132,6 +134,17 @@ struct MinorityClusterRescueEngine {
     }
 
     // MARK: - Entry point
+
+    /// Technical-only diagnostics: labels, counts and margin ratios. Never
+    /// audio, text, paths, embedding contents, or stable identifiers.
+    private func log(_ level: AppLogLevel, _ text: String) {
+        switch level {
+        case .debug: logger.debug(text)
+        case .info: logger.info(text)
+        }
+    }
+
+    enum AppLogLevel { case debug, info }
 
     /// Applies the rescue gate cascade to the baseline clustering result.
     ///
@@ -283,14 +296,18 @@ struct MinorityClusterRescueEngine {
         let activeMembers = members.filter { trainingIndex in
             candidateSupport(trainingIndex: trainingIndex).count > 0
         }
-        guard !activeMembers.isEmpty else { return nil }
+        guard !activeMembers.isEmpty else 
+            
+            { log(.debug, "gate1 no active members"); return nil }
         for trainingIndex in activeMembers {
             let embedding = timedEmbeddings[trainingIndices[trainingIndex]]
             let span = windowSpan(trainingIndex: trainingIndex)
             perChunk[embedding.chunkIndex, default: []].append(span)
         }
         let distinctChunks = perChunk.keys.filter { index in index >= 0 }
-        guard distinctChunks.count >= options.minIndependentChunks else { return nil }
+        guard distinctChunks.count >= options.minIndependentChunks else 
+            
+            { log(.debug, "gate1 insufficient distinct chunks"); return nil }
         // Intervals across distinct chunks must not overlap.
         let acrossChunkIntervals = perChunk.keys
             .filter { $0 >= 0 }
@@ -343,9 +360,13 @@ struct MinorityClusterRescueEngine {
             frameDuration: frameDuration,
             gapThreshold: options.crossSpeechGapSeconds
         )
-        guard activityRuns.count >= 2 else { return nil }
+        guard activityRuns.count >= 2 else 
+            
+            { log(.debug, "gate2 insufficient cross-speech runs"); return nil }
         let effectiveSpeechSeconds = Double(candidateFrames.count) * frameDuration
-        guard effectiveSpeechSeconds >= options.minEffectiveSpeechSeconds else { return nil }
+        guard effectiveSpeechSeconds >= options.minEffectiveSpeechSeconds else 
+            
+            { log(.debug, "gate3 insufficient effective speech"); return nil }
 
         // Gate 3 — relative separation: the candidate centroid must be far
         // enough from the host's remaining embeddings relative to its own
@@ -370,7 +391,8 @@ struct MinorityClusterRescueEngine {
         }
         let hostCentroid = Self.normalized(baselineCentroids[host])
         let identityRatio = Self.distance(centroid, hostCentroid) / max(withinSpread, 1e-6)
-        guard identityRatio >= options.rescueMargin else {
+        if identityRatio < options.rescueMargin {
+            log(.debug, "gate3a insufficient identity separation ratio=\(identityRatio)")
             return nil
         }
 
@@ -448,10 +470,11 @@ struct MinorityClusterRescueEngine {
                     )
                     nearestRemaining = min(nearestRemaining, delta)
                 }
-                guard
-                    nearestRemaining.isFinite,
-                    nearestRemaining / max(candidate.withinSpread, 1e-6) >= options.rescueMargin
-                else { continue }
+                let remainingRatio = nearestRemaining / max(candidate.withinSpread, 1e-6)
+                if !nearestRemaining.isFinite || remainingRatio < options.rescueMargin {
+                    logger.debug("gate3b insufficient remaining-host margin ratio=\(remainingRatio)")
+                    continue
+                }
 
                 // Gate 4 — host remaining support after splitting off the full
                 // qualifying candidate set (prevents the host from being
@@ -477,7 +500,10 @@ struct MinorityClusterRescueEngine {
                         break
                     }
                 }
-                guard separatedFromPeers else { continue }
+                if !separatedFromPeers {
+                    logger.debug("gate5 candidate peer conflict")
+                    continue
+                }
 
                 keptForHost.append(candidate)
             }
@@ -509,7 +535,10 @@ struct MinorityClusterRescueEngine {
         guard survivingCount >= options.minIndependentChunks,
               Set(survivingChunks).count >= options.minIndependentChunks,
               Double(survivingFrames.count) * frameDuration >= options.minEffectiveSpeechSeconds
-        else { return false }
+        else {
+            log(.debug, "gate4 host remaining support failed")
+            return false
+        }
         return true
     }
 
