@@ -403,6 +403,10 @@ public final class OfflineDiarizerManager {
             )
             if rescueTrace {
                 FileHandle.standardError.write(("rescue: training=\(trainingIndices.count) initialClusters=\(Set(initialClusters).count)\n").data(using: .utf8)!)
+                var sizes: [Int: Int] = [:]
+                for label in initialClusters { sizes[label, default: 0] += 1 }
+                let top = sizes.sorted { $0.value > $1.value }.prefix(6).map { "\($0.key):\($0.value)" }
+                FileHandle.standardError.write(("rescue: clusterSizes(top)=\(top)\n").data(using: .utf8)!)
             }
             let rescueResult = rescueEngine.resolve(
                 embeddingFeatures: embeddingFeatures,
